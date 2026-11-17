@@ -5,6 +5,16 @@ import { MindARThree } from "mindar-image-three";
 (() => {
   const TARGET_FILE = "./assets/targets.mind";
   const PARTICLE_COUNT = 1800;
+  const STORAGE_KEY = "huellas-sonoras-traces-v1";
+
+  function readSavedTraces() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  }
 
   const state = {
     started: false,
@@ -12,6 +22,7 @@ import { MindARThree } from "mindar-image-three";
     audioContext: null,
     mindar: null,
     traces: [],
+    savedTraces: readSavedTraces(),
     messageTimer: null,
   };
 
@@ -176,6 +187,26 @@ import { MindARThree } from "mindar-image-three";
     return { element, node: analyser, data: new Uint8Array(analyser.frequencyBinCount), targetVolume: 0 };
   }
 
+  function applySavedTrace(index) {
+    const saved = state.savedTraces[index];
+    const trace = state.traces[index];
+    if (!saved?.text || !trace) return;
+    const emotion = configs.find((config) => config.kind === saved.emotion) || configs[index];
+    trace.points.material.color.setHex(emotion.color);
+    trace.points.userData.config = { ...trace.points.userData.config, kind: emotion.kind, color: emotion.color };
+    trace.points.userData.text = saved.text;
+  }
+
+  function saveTraces() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.savedTraces));
+      return true;
+    } catch (error) {
+      console.warn("No se pudo guardar la huella", error);
+      return false;
+    }
+  }
+
   async function revealTarget(index) {
     if (state.activeTarget !== null && state.activeTarget !== index) hideTarget(state.activeTarget);
     state.activeTarget = index;
@@ -185,7 +216,8 @@ import { MindARThree } from "mindar-image-three";
     try { await trace.audio.element.play(); } catch (error) { console.warn("Audio no disponible todavía", error); }
     setStatus(`${configs[index].name}: huella encontrada`, true);
     dom.traceButton.disabled = false;
-    notify(configs[index].line);
+    const saved = state.savedTraces[index];
+    notify(saved?.text ? `“${saved.text}” sigue guardada en este lugar.` : configs[index].line);
   }
 
   function hideTarget(index) {
@@ -232,6 +264,7 @@ import { MindARThree } from "mindar-image-three";
       const audio = createAudio(config);
       anchor.group.add(points);
       state.traces[index] = { anchor, points, audio };
+      applySavedTrace(index);
       anchor.onTargetFound = () => revealTarget(index);
       anchor.onTargetLost = () => hideTarget(index);
     });
@@ -266,12 +299,11 @@ import { MindARThree } from "mindar-image-three";
   dom.form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (state.activeTarget === null) return;
-    const trace = state.traces[state.activeTarget];
-    const next = configs.find((config) => config.kind === dom.emotion.value);
-    trace.points.material.color.setHex(next.color);
-    trace.points.userData.config = { ...trace.points.userData.config, kind: next.kind, color: next.color };
-    trace.points.userData.text = dom.text.value.trim();
-    notify(`“${trace.points.userData.text}” quedó ligada a este lugar.`);
+    const text = dom.text.value.trim();
+    state.savedTraces[state.activeTarget] = { text, emotion: dom.emotion.value, savedAt: new Date().toISOString() };
+    applySavedTrace(state.activeTarget);
+    const didSave = saveTraces();
+    notify(didSave ? `“${text}” quedó guardada en este lugar.` : "La huella se ve ahora, pero el navegador no pudo guardarla.");
     setPanel(false);
     dom.form.reset();
   });

@@ -20,6 +20,6 @@ No abras `index.html` con doble clic: los navegadores requieren HTTPS (o `localh
 
 ## Prueba física
 
-Pon un marcador a la vez frente a la cámara con buena luz. Al reconocerlo debe aparecer la huella, reproducirse el audio y activarse **+ Dejar huella**. El formulario cambia temporalmente el color y el comportamiento de la huella activa; no guarda datos en un servidor.
+Pon un marcador a la vez frente a la cámara con buena luz. Al reconocerlo debe aparecer la huella, reproducirse el audio y activarse **+ Dejar huella**. El formulario guarda la última frase y emoción de cada marcador mediante el almacenamiento local del navegador: seguirá disponible después de recargar en ese mismo celular y navegador, pero no se comparte con otras personas ni se guarda en un servidor.
 
 Usa solo audio e imágenes sobre los que tengas permiso de uso.
