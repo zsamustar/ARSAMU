@@ -1,310 +1,452 @@
-/* Huellas Sonoras: MindAR + Three.js. No requiere npm ni servidor de desarrollo. */
-import * as THREE from "three";
-import { MindARThree } from "mindar-image-three";
+import * as THREE from "https://unpkg.com/three@0.160.1/build/three.module.js";
+import { firebaseConfig, firebaseReady } from "./firebase-config.js";
 
-(() => {
-  const TARGET_FILE = "./assets/targets.mind";
-  const PARTICLE_COUNT = 1800;
-  const STORAGE_KEY = "huellas-sonoras-traces-v1";
+const RADIUS_METERS = 60;
+const EYE_HEIGHT = 1.55;
+const EMOTIONS = {
+  calma: { label: "Calma", color: "#38bdf8" },
+  nostalgia: { label: "Nostalgia", color: "#fbbf24" },
+  desahogo: { label: "Desahogo", color: "#c084fc" },
+  gratitud: { label: "Gratitud", color: "#34d399" }
+};
 
-  function readSavedTraces() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-      return Array.isArray(saved) ? saved : [];
-    } catch {
-      return [];
-    }
+const ui = {
+  landing: document.querySelector("#landing"), arSpace: document.querySelector("#ar-space"),
+  enter: document.querySelector("#enter-button"), camera: document.querySelector("#camera-feed"), canvas: document.querySelector("#ar-canvas"),
+  message: document.querySelector("#ar-message"), instructions: document.querySelector("#ar-instructions"),
+  count: document.querySelector("#memory-count"), demo: document.querySelector("#demo-button"),
+  compose: document.querySelector("#compose-button"), composer: document.querySelector("#composer"), closeComposer: document.querySelector("#close-composer"),
+  form: document.querySelector("#thought-form"), thought: document.querySelector("#thought-input"), characterCount: document.querySelector("#character-count"), formError: document.querySelector("#form-error"),
+  card: document.querySelector("#memory-card"), closeCard: document.querySelector("#close-memory"), cardEmotion: document.querySelector("#memory-emotion"), cardDistance: document.querySelector("#memory-distance"), cardTime: document.querySelector("#memory-time"), cardText: document.querySelector("#memory-text")
+};
+
+let renderer, scene, camera, raycaster, clock;
+let stream, positionWatchId, unsubscribeSnapshot;
+let userPosition = null;
+let origin = null;
+let deviceOrientation = { alpha: 0, beta: 0, gamma: 0, compass: null };
+let orientationAvailable = false;
+let manualLook = { yaw: 0, pitch: 0, active: false, x: 0, y: 0 };
+let demoMode = false;
+let selectedId = null;
+let firestore = null;
+let firebaseApi = null;
+let localThoughts = [];
+const orbs = new Map();
+const rayTargets = [];
+const pulseQuaternion = new THREE.Quaternion();
+const zee = new THREE.Vector3(0, 0, 1);
+const euler = new THREE.Euler();
+const q0 = new THREE.Quaternion();
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+
+function showMessage(text, persistent = false) {
+  ui.message.textContent = text;
+  ui.message.classList.remove("is-idle");
+  window.clearTimeout(showMessage.timeout);
+  if (!persistent) showMessage.timeout = window.setTimeout(() => ui.message.classList.add("is-idle"), 3800);
+}
+
+function hideMessage() { ui.message.classList.add("is-idle"); }
+
+function isSecureEnough() {
+  return window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+}
+
+async function enterExperience() {
+  if (!isSecureEnough()) {
+    showMessage("Esta experiencia necesita HTTPS para acceder a cámara y ubicación.", true);
+    return;
   }
-
-  const state = {
-    started: false,
-    activeTarget: null,
-    audioContext: null,
-    mindar: null,
-    traces: [],
-    savedTraces: readSavedTraces(),
-    messageTimer: null,
-  };
-
-  const configs = [
-    { name: "Calma", kind: "calm", color: 0x42e8df, audio: "./assets/audio0.mp3", line: "Una respiración azul quedó en este punto." },
-    { name: "Euforia", kind: "energy", color: 0xff7655, audio: "./assets/audio1.mp3", line: "Este lugar todavía conserva su impulso." },
-    { name: "Nostalgia", kind: "memory", color: 0xffbf50, audio: "./assets/audio2.mp3", line: "Una vuelta lenta entre lo que pasó y lo que vuelve." },
-  ];
-
-  const dom = {
-    welcome: document.querySelector("#welcome"),
-    start: document.querySelector("#start-button"),
-    stage: document.querySelector("#ar-stage"),
-    status: document.querySelector("#status"),
-    signal: document.querySelector("#signal"),
-    traceButton: document.querySelector("#leave-trace"),
-    panel: document.querySelector("#trace-panel"),
-    closePanel: document.querySelector("#close-panel"),
-    form: document.querySelector("#trace-form"),
-    text: document.querySelector("#trace-text"),
-    emotion: document.querySelector("#emotion"),
-    message: document.querySelector("#message"),
-  };
-
-  function setStatus(text, active = false) {
-    dom.status.textContent = text;
-    dom.signal.classList.toggle("is-active", active);
+  ui.enter.disabled = true;
+  ui.enter.textContent = "Abriendo sensores…";
+  ui.landing.hidden = true;
+  ui.arSpace.hidden = false;
+  initializeThree();
+  showMessage("Solicitando permiso de orientación…", true);
+  try {
+    await requestOrientation();
+    showMessage("Solicitando cámara trasera…", true);
+    await requestCamera();
+    showMessage("Buscando tu ubicación…", true);
+    startGeolocation();
+    await connectThoughtStore();
+    ui.instructions.hidden = false;
+    showMessage(orientationAvailable ? "Busca los orbes que aparecen a tu alrededor." : "Activa Modo Demo para mirar con el dedo o mouse.");
+  } catch (error) {
+    console.error(error);
+    showMessage(error.message || "No se pudo iniciar la experiencia. Prueba Modo Demo.", true);
+    ui.demo.focus();
   }
+}
 
-  function notify(text) {
-    dom.message.textContent = text;
-    dom.message.classList.add("is-visible");
-    clearTimeout(state.messageTimer);
-    state.messageTimer = setTimeout(() => dom.message.classList.remove("is-visible"), 3400);
+async function requestOrientation() {
+  if (typeof DeviceOrientationEvent === "undefined") {
+    orientationAvailable = false;
+    return;
   }
-
-  function makeParticleTexture() {
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
-    gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.35, "rgba(255,255,255,0.92)");
-    gradient.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(canvas);
+  if (typeof DeviceOrientationEvent.requestPermission === "function") {
+    const response = await DeviceOrientationEvent.requestPermission();
+    if (response !== "granted") throw new Error("La orientación fue denegada. Puedes usar Modo Demo para arrastrar la vista.");
   }
+  window.addEventListener("deviceorientation", onDeviceOrientation, true);
+  orientationAvailable = true;
+}
 
-  function createSystem(config) {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    const base = new Float32Array(PARTICLE_COUNT * 3);
-    const phase = new Float32Array(PARTICLE_COUNT);
+function onDeviceOrientation(event) {
+  deviceOrientation.alpha = event.alpha ?? 0;
+  deviceOrientation.beta = event.beta ?? 0;
+  deviceOrientation.gamma = event.gamma ?? 0;
+  deviceOrientation.compass = typeof event.webkitCompassHeading === "number" ? event.webkitCompassHeading : null;
+}
 
-    for (let i = 0; i < PARTICLE_COUNT; i += 1) {
-      const p = i * 3;
-      phase[i] = Math.random() * Math.PI * 2;
-      if (config.kind === "calm") {
-        const radius = 0.22 + Math.cbrt(Math.random()) * 0.62;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        base[p] = radius * Math.sin(phi) * Math.cos(theta);
-        base[p + 1] = radius * Math.cos(phi);
-        base[p + 2] = radius * Math.sin(phi) * Math.sin(theta);
-      } else if (config.kind === "energy") {
-        const radius = 0.04 + Math.pow(Math.random(), 1.7) * 0.95;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-        base[p] = radius * Math.sin(phi) * Math.cos(theta);
-        base[p + 1] = radius * Math.cos(phi);
-        base[p + 2] = radius * Math.sin(phi) * Math.sin(theta);
-      } else {
-        const turns = 4.5;
-        const t = i / PARTICLE_COUNT;
-        const angle = t * Math.PI * 2 * turns;
-        const radius = 0.12 + t * 0.83 + (Math.random() - 0.5) * 0.1;
-        base[p] = Math.cos(angle) * radius;
-        base[p + 1] = (t - 0.5) * 0.7 + (Math.random() - 0.5) * 0.13;
-        base[p + 2] = Math.sin(angle) * radius;
-      }
-      positions[p] = base[p];
-      positions[p + 1] = base[p + 1];
-      positions[p + 2] = base[p + 2];
-    }
-
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
-      color: config.color,
-      size: config.kind === "energy" ? 0.042 : 0.035,
-      map: makeParticleTexture(),
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      sizeAttenuation: true,
-    });
-    const points = new THREE.Points(geometry, material);
-    points.visible = false;
-    points.userData = { config, base, phase, opacity: 0, targetOpacity: 0, energy: 0, text: "" };
-    return points;
+async function requestCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Este navegador no permite usar la cámara. Abre el sitio en un navegador actualizado con HTTPS.");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+    ui.camera.srcObject = stream;
+    await ui.camera.play();
+  } catch (error) {
+    if (error.name === "NotAllowedError") throw new Error("La cámara fue denegada. Permítela desde el navegador y vuelve a intentarlo.");
+    throw new Error("No se pudo abrir la cámara trasera. Prueba Modo Demo o revisa los permisos.");
   }
+}
 
-  function getBandEnergy(data, start, end) {
-    let total = 0;
-    const max = Math.min(end, data.length);
-    for (let i = start; i < max; i += 1) total += data[i];
-    return total / Math.max(1, max - start) / 255;
+function startGeolocation() {
+  if (!navigator.geolocation) {
+    showMessage("Tu navegador no ofrece geolocalización. Modo Demo usará una posición simulada.", true);
+    return;
   }
-
-  function updateSystem(points, time, analyser) {
-    const meta = points.userData;
-    const pos = points.geometry.attributes.position.array;
-    const data = analyser?.data;
-    if (data && analyser.node) analyser.node.getByteFrequencyData(data);
-    const bass = data ? getBandEnergy(data, 0, 18) : 0.12;
-    const mids = data ? getBandEnergy(data, 18, 74) : 0.1;
-    const highs = data ? getBandEnergy(data, 74, 150) : 0.1;
-    const level = meta.config.kind === "calm" ? bass : meta.config.kind === "energy" ? highs : mids;
-    meta.energy += (level - meta.energy) * 0.12;
-    meta.opacity += (meta.targetOpacity - meta.opacity) * 0.11;
-    points.material.opacity = meta.opacity;
-    points.visible = meta.opacity > 0.012 || meta.targetOpacity > 0.012;
-    const scale = meta.config.kind === "calm" ? 1 + meta.energy * 0.45 : meta.config.kind === "energy" ? 1 + meta.energy * 0.86 : 1 + meta.energy * 0.24;
-    points.scale.setScalar(scale);
-
-    if (meta.config.kind === "memory") {
-      points.rotation.y += 0.005 + meta.energy * 0.028;
-    }
-    for (let i = 0; i < PARTICLE_COUNT; i += 1) {
-      const p = i * 3;
-      const wave = Math.sin(time * (meta.config.kind === "energy" ? 0.012 : 0.0025) + meta.phase[i]);
-      if (meta.config.kind === "calm") {
-        pos[p] = meta.base[p] * (1 + meta.energy * 0.18);
-        pos[p + 1] = meta.base[p + 1] + wave * (0.02 + meta.energy * 0.09);
-        pos[p + 2] = meta.base[p + 2] * (1 + meta.energy * 0.18);
-      } else if (meta.config.kind === "energy") {
-        const jitter = wave * (0.012 + meta.energy * 0.13);
-        pos[p] = meta.base[p] * (1 + meta.energy * 0.55) + jitter;
-        pos[p + 1] = meta.base[p + 1] * (1 + meta.energy * 0.55) + Math.cos(time * 0.014 + meta.phase[i]) * meta.energy * 0.12;
-        pos[p + 2] = meta.base[p + 2] * (1 + meta.energy * 0.55) + jitter;
-      } else {
-        pos[p] = meta.base[p] + Math.cos(time * 0.003 + meta.phase[i]) * meta.energy * 0.055;
-        pos[p + 1] = meta.base[p + 1] + wave * meta.energy * 0.11;
-        pos[p + 2] = meta.base[p + 2] + Math.sin(time * 0.003 + meta.phase[i]) * meta.energy * 0.055;
-      }
-    }
-    points.geometry.attributes.position.needsUpdate = true;
-  }
-
-  function createAudio(config) {
-    const element = new Audio(config.audio);
-    element.loop = true;
-    element.preload = "auto";
-    element.volume = 0;
-    const source = state.audioContext.createMediaElementSource(element);
-    const analyser = state.audioContext.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.82;
-    source.connect(analyser);
-    analyser.connect(state.audioContext.destination);
-    return { element, node: analyser, data: new Uint8Array(analyser.frequencyBinCount), targetVolume: 0 };
-  }
-
-  function applySavedTrace(index) {
-    const saved = state.savedTraces[index];
-    const trace = state.traces[index];
-    if (!saved?.text || !trace) return;
-    const emotion = configs.find((config) => config.kind === saved.emotion) || configs[index];
-    trace.points.material.color.setHex(emotion.color);
-    trace.points.userData.config = { ...trace.points.userData.config, kind: emotion.kind, color: emotion.color };
-    trace.points.userData.text = saved.text;
-  }
-
-  function saveTraces() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.savedTraces));
-      return true;
-    } catch (error) {
-      console.warn("No se pudo guardar la huella", error);
-      return false;
-    }
-  }
-
-  async function revealTarget(index) {
-    if (state.activeTarget !== null && state.activeTarget !== index) hideTarget(state.activeTarget);
-    state.activeTarget = index;
-    const trace = state.traces[index];
-    trace.points.userData.targetOpacity = 1;
-    trace.audio.targetVolume = 0.55;
-    try { await trace.audio.element.play(); } catch (error) { console.warn("Audio no disponible todavía", error); }
-    setStatus(`${configs[index].name}: huella encontrada`, true);
-    dom.traceButton.disabled = false;
-    const saved = state.savedTraces[index];
-    notify(saved?.text ? `“${saved.text}” sigue guardada en este lugar.` : configs[index].line);
-  }
-
-  function hideTarget(index) {
-    const trace = state.traces[index];
-    if (!trace) return;
-    trace.points.userData.targetOpacity = 0;
-    trace.audio.targetVolume = 0;
-    if (state.activeTarget === index) {
-      state.activeTarget = null;
-      dom.traceButton.disabled = true;
-      dom.panel.hidden = true;
-      setStatus("Busca otro póster para encontrar una huella.", false);
-    }
-  }
-
-  function updateAudioVolumes() {
-    state.traces.forEach((trace) => {
-      const { element, targetVolume } = trace.audio;
-      element.volume += (targetVolume - element.volume) * 0.12;
-      if (targetVolume === 0 && element.volume < 0.012 && !element.paused) element.pause();
-    });
-  }
-
-  async function startExperience() {
-    if (state.started) return;
-    if (location.protocol === "file:") {
-      setStatus("Abre este proyecto desde GitHub Pages o un servidor HTTPS para usar la cámara.");
-      return;
-    }
-    state.started = true;
-    dom.start.disabled = true;
-    dom.start.textContent = "Abriendo cámara…";
-    setStatus("Pide permiso para usar la cámara…", true);
-    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    await state.audioContext.resume();
-
-    state.mindar = new MindARThree({ container: dom.stage, imageTargetSrc: TARGET_FILE, maxTrack: 1, uiScanning: "no" });
-    const { renderer, scene, camera } = state.mindar;
-    renderer.setClearColor(0x000000, 0);
-
-    configs.forEach((config, index) => {
-      const anchor = state.mindar.addAnchor(index);
-      const points = createSystem(config);
-      const audio = createAudio(config);
-      anchor.group.add(points);
-      state.traces[index] = { anchor, points, audio };
-      applySavedTrace(index);
-      anchor.onTargetFound = () => revealTarget(index);
-      anchor.onTargetLost = () => hideTarget(index);
-    });
-
-    try {
-      await state.mindar.start();
-      dom.welcome.classList.add("is-hidden");
-      setStatus("Apunta la cámara a uno de los tres pósteres.", false);
-      renderer.setAnimationLoop((time) => {
-        state.traces.forEach((trace) => updateSystem(trace.points, time, trace.audio));
-        updateAudioVolumes();
-        renderer.render(scene, camera);
-      });
-    } catch (error) {
-      console.error(error);
-      state.started = false;
-      dom.start.disabled = false;
-      dom.start.textContent = "Intentar de nuevo";
-      setStatus("No fue posible abrir la cámara. Confirma el permiso y que uses HTTPS.");
-    }
-  }
-
-  function setPanel(open) {
-    if (state.activeTarget === null) return;
-    dom.panel.hidden = !open;
-    if (open) dom.text.focus();
-  }
-
-  dom.start.addEventListener("click", startExperience);
-  dom.traceButton.addEventListener("click", () => setPanel(true));
-  dom.closePanel.addEventListener("click", () => setPanel(false));
-  dom.form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (state.activeTarget === null) return;
-    const text = dom.text.value.trim();
-    state.savedTraces[state.activeTarget] = { text, emotion: dom.emotion.value, savedAt: new Date().toISOString() };
-    applySavedTrace(state.activeTarget);
-    const didSave = saveTraces();
-    notify(didSave ? `“${text}” quedó guardada en este lugar.` : "La huella se ve ahora, pero el navegador no pudo guardarla.");
-    setPanel(false);
-    dom.form.reset();
+  positionWatchId = navigator.geolocation.watchPosition(onPosition, onGeoError, {
+    enableHighAccuracy: true, maximumAge: 5000, timeout: 15000
   });
-})();
+}
+
+function onPosition(position) {
+  userPosition = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy };
+  if (!origin) origin = { ...userPosition };
+  refreshOrbs();
+  const precision = Math.round(userPosition.accuracy);
+  showMessage(precision > 35 ? `Ubicación aproximada (±${precision} m). Los orbes se ajustarán al mejorar.` : "Ubicación conectada.");
+}
+
+function onGeoError(error) {
+  const errors = { 1: "La ubicación fue denegada. Activa Modo Demo para probar los orbes.", 2: "No se pudo determinar tu ubicación. Activa Modo Demo para continuar.", 3: "La ubicación tardó demasiado. Puedes probar con Modo Demo." };
+  showMessage(errors[error.code] || "Ocurrió un problema al obtener la ubicación.", true);
+}
+
+function initializeThree() {
+  if (renderer) return;
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(66, window.innerWidth / window.innerHeight, .03, 250);
+  camera.position.set(0, EYE_HEIGHT, 0);
+  renderer = new THREE.WebGLRenderer({ canvas: ui.canvas, alpha: true, antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  raycaster = new THREE.Raycaster();
+  raycaster.params.Mesh.threshold = .36;
+  clock = new THREE.Clock();
+  scene.add(new THREE.HemisphereLight(0xa7efe0, 0x071012, 1.65));
+  window.addEventListener("resize", resizeThree);
+  ui.canvas.addEventListener("pointerdown", onCanvasPointerDown);
+  ui.canvas.addEventListener("pointermove", onCanvasPointerMove);
+  ui.canvas.addEventListener("pointerup", onCanvasPointerUp);
+  ui.canvas.addEventListener("pointercancel", onCanvasPointerUp);
+  animate();
+}
+
+function resizeThree() {
+  if (!renderer) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+}
+
+function updateCameraOrientation() {
+  if (manualLook.active || (demoMode && !orientationAvailable)) {
+    camera.rotation.set(manualLook.pitch, manualLook.yaw, 0, "YXZ");
+    return;
+  }
+  if (!orientationAvailable) return;
+  // Compensa el sistema de ejes de pantalla y usa el rumbo calibrado de Safari cuando existe.
+  const alpha = THREE.MathUtils.degToRad(deviceOrientation.compass !== null ? 360 - deviceOrientation.compass : deviceOrientation.alpha);
+  const beta = THREE.MathUtils.degToRad(deviceOrientation.beta);
+  const gamma = THREE.MathUtils.degToRad(deviceOrientation.gamma);
+  const screenAngle = THREE.MathUtils.degToRad(window.screen.orientation?.angle || window.orientation || 0);
+  euler.set(beta, alpha, -gamma, "YXZ");
+  camera.quaternion.setFromEuler(euler);
+  camera.quaternion.multiply(q1);
+  camera.quaternion.multiply(q0.setFromAxisAngle(zee, -screenAngle));
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (!renderer) return;
+  const elapsed = clock.getElapsedTime();
+  updateCameraOrientation();
+  orbs.forEach((orb) => updateOrb(orb, elapsed));
+  renderer.render(scene, camera);
+}
+
+function updateOrb(orb, time) {
+  const { group, mesh, halo, baseY, seed, originalPositions } = orb;
+  group.position.y = baseY + Math.sin(time * (0.72 + seed * .25) + seed * 12) * .18;
+  group.rotation.y = time * (.12 + seed * .05);
+  const positions = mesh.geometry.attributes.position;
+  for (let i = 0; i < positions.count; i += 1) {
+    const x = originalPositions[i * 3], y = originalPositions[i * 3 + 1], z = originalPositions[i * 3 + 2];
+    const variation = 1 + Math.sin(time * (1.2 + seed) + x * 5 + y * 4 + z * 3) * .055 + Math.sin(time * .7 + x * 9) * .025;
+    positions.setXYZ(i, x * variation, y * variation, z * variation);
+  }
+  positions.needsUpdate = true;
+  if (Math.floor(time * 12) % 3 === 0) mesh.geometry.computeVertexNormals();
+  const selected = selectedId === orb.id;
+  const scale = selected ? 1.14 + Math.sin(time * 7) * .07 : 1;
+  mesh.scale.setScalar(scale);
+  halo.material.opacity = selected ? .92 : .58 + Math.sin(time * 1.8 + seed) * .12;
+}
+
+function createGlowTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext("2d");
+  const gradient = context.createRadialGradient(64, 64, 1, 64, 64, 64);
+  gradient.addColorStop(0, "rgba(255,255,255,1)");
+  gradient.addColorStop(.18, "rgba(255,255,255,.72)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function makeOrb(thought) {
+  const group = new THREE.Group();
+  const color = new THREE.Color(EMOTIONS[thought.emotion]?.color || EMOTIONS.calma.color);
+  const geometry = new THREE.SphereGeometry(.54, 28, 20);
+  const originalPositions = Float32Array.from(geometry.attributes.position.array);
+  const material = new THREE.MeshPhysicalMaterial({ color, emissive: color, emissiveIntensity: .62, transparent: true, opacity: .72, roughness: .26, metalness: .08, transmission: .18, thickness: .5, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geometry, material);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: createGlowTexture(), color, transparent: true, opacity: .63, blending: THREE.AdditiveBlending, depthWrite: false }));
+  halo.scale.set(2.9, 2.9, 1);
+  const hitBox = new THREE.Mesh(new THREE.SphereGeometry(.92, 14, 10), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+  hitBox.userData.thoughtId = thought.id;
+  group.add(halo, mesh, hitBox);
+  scene.add(group);
+  rayTargets.push(hitBox);
+  return { id: thought.id, thought, group, mesh, halo, hitBox, originalPositions, baseY: EYE_HEIGHT + .38, seed: seeded(thought.id) };
+}
+
+function seeded(value) {
+  let hash = 2166136261;
+  for (const char of String(value)) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return ((hash >>> 0) % 1000) / 1000;
+}
+
+function localENU(lat, lng, reference) {
+  const earthRadius = 6378137;
+  const dLat = THREE.MathUtils.degToRad(lat - reference.lat);
+  const dLng = THREE.MathUtils.degToRad(lng - reference.lng);
+  return { x: dLng * earthRadius * Math.cos(THREE.MathUtils.degToRad(reference.lat)), z: -dLat * earthRadius };
+}
+
+function distanceMeters(a, b) {
+  const earthRadius = 6371000;
+  const dLat = THREE.MathUtils.degToRad(b.lat - a.lat);
+  const dLng = THREE.MathUtils.degToRad(b.lng - a.lng);
+  const aValue = Math.sin(dLat / 2) ** 2 + Math.cos(THREE.MathUtils.degToRad(a.lat)) * Math.cos(THREE.MathUtils.degToRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(aValue), Math.sqrt(1 - aValue));
+}
+
+function getJitter(thought) {
+  const peerCount = [...allThoughts()].filter(item => Math.abs(item.lat - thought.lat) < 0.000001 && Math.abs(item.lng - thought.lng) < 0.000001).length;
+  if (peerCount < 2) return { x: 0, z: 0 };
+  const seed = seeded(thought.id);
+  const distance = 1.5 + seed * 2;
+  const angle = seed * Math.PI * 2;
+  return { x: Math.cos(angle) * distance, z: Math.sin(angle) * distance };
+}
+
+function allThoughts() { return firestore ? firestore.thoughts : localThoughts; }
+
+function refreshOrbs() {
+  if (!scene || !userPosition || !origin) return;
+  const nearby = allThoughts().filter(thought => Number.isFinite(thought.lat) && Number.isFinite(thought.lng) && distanceMeters(userPosition, thought) <= RADIUS_METERS);
+  const nearbyIds = new Set(nearby.map(item => item.id));
+  orbs.forEach((orb, id) => { if (!nearbyIds.has(id)) removeOrb(id); });
+  nearby.forEach(thought => {
+    const enu = localENU(thought.lat, thought.lng, origin);
+    const jitter = getJitter(thought);
+    let orb = orbs.get(thought.id);
+    if (!orb) { orb = makeOrb(thought); orbs.set(thought.id, orb); }
+    orb.thought = thought;
+    orb.group.position.x = enu.x + jitter.x;
+    orb.group.position.z = enu.z + jitter.z;
+    orb.baseY = EYE_HEIGHT + .36 + seeded(thought.id) * .6;
+  });
+  ui.count.textContent = `${nearby.length} ${nearby.length === 1 ? "memoria cerca" : "memorias cerca"}`;
+}
+
+function removeOrb(id) {
+  const orb = orbs.get(id);
+  if (!orb) return;
+  const targetIndex = rayTargets.indexOf(orb.hitBox);
+  if (targetIndex >= 0) rayTargets.splice(targetIndex, 1);
+  scene.remove(orb.group);
+  orb.mesh.geometry.dispose(); orb.mesh.material.dispose(); orb.halo.material.map.dispose(); orb.halo.material.dispose(); orb.hitBox.geometry.dispose(); orb.hitBox.material.dispose();
+  orbs.delete(id);
+}
+
+function onCanvasPointerDown(event) {
+  if (ui.composer.hidden === false) return;
+  manualLook.active = demoMode || !orientationAvailable;
+  manualLook.x = event.clientX; manualLook.y = event.clientY;
+  ui.canvas.setPointerCapture?.(event.pointerId);
+}
+
+function onCanvasPointerMove(event) {
+  if (!manualLook.active) return;
+  const dx = event.clientX - manualLook.x, dy = event.clientY - manualLook.y;
+  if (Math.abs(dx) + Math.abs(dy) > 2) manualLook.dragged = true;
+  manualLook.yaw -= dx * .006; manualLook.pitch = THREE.MathUtils.clamp(manualLook.pitch - dy * .006, -1.35, 1.35);
+  manualLook.x = event.clientX; manualLook.y = event.clientY;
+}
+
+function onCanvasPointerUp(event) {
+  if (!manualLook.dragged) pickOrb(event);
+  manualLook.active = false; manualLook.dragged = false;
+}
+
+function pickOrb(event) {
+  if (!raycaster || !rayTargets.length) return;
+  const rect = ui.canvas.getBoundingClientRect();
+  const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(rayTargets, false)[0];
+  if (!hit) { closeMemoryCard(); return; }
+  openMemoryCard(hit.object.userData.thoughtId);
+}
+
+function openMemoryCard(id) {
+  const orb = orbs.get(id);
+  if (!orb) return;
+  selectedId = id;
+  const thought = orb.thought;
+  const emotion = EMOTIONS[thought.emotion] || EMOTIONS.calma;
+  ui.cardEmotion.textContent = emotion.label;
+  ui.cardEmotion.style.color = emotion.color;
+  ui.cardDistance.textContent = `a ${Math.max(1, Math.round(distanceMeters(userPosition, thought)))} m de ti`;
+  ui.cardTime.textContent = relativeTime(thought.createdAt || thought.createdAtClient);
+  ui.cardText.textContent = thought.text;
+  ui.card.hidden = false;
+}
+
+function closeMemoryCard() { selectedId = null; ui.card.hidden = true; }
+
+function relativeTime(value) {
+  const date = value?.toDate ? value.toDate() : new Date(value || Date.now());
+  const minutes = Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000));
+  if (minutes < 1) return "ahora";
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  return `hace ${Math.floor(hours / 24)} d`;
+}
+
+async function connectThoughtStore() {
+  if (!firebaseReady) {
+    firestore = { thoughts: localThoughts, local: true };
+    showMessage("Modo local: conecta Firebase para compartir pensamientos en tiempo real.");
+    return;
+  }
+  try {
+    const [{ initializeApp, getApps }, { getFirestore, collection, addDoc, onSnapshot, serverTimestamp }] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js")
+    ]);
+    const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    firebaseApi = { collection, addDoc, onSnapshot, serverTimestamp, db };
+    firestore = { thoughts: [], local: false };
+    unsubscribeSnapshot = onSnapshot(collection(db, "pensamientos"), (snapshot) => {
+      firestore.thoughts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      refreshOrbs();
+    }, (error) => {
+      console.error(error);
+      showMessage("No se pudo sincronizar Firestore. Revisa tus credenciales y reglas.", true);
+    });
+  } catch (error) {
+    console.error(error);
+    firestore = { thoughts: localThoughts, local: true };
+    showMessage("No fue posible conectar Firebase. La sesión seguirá en modo local.", true);
+  }
+}
+
+function showComposer() {
+  closeMemoryCard(); ui.composer.hidden = false; ui.compose.hidden = true; ui.thought.focus();
+}
+function hideComposer() { ui.composer.hidden = true; ui.compose.hidden = false; ui.formError.textContent = ""; }
+
+async function saveThought(event) {
+  event.preventDefault();
+  const text = ui.thought.value.trim();
+  const emotion = new FormData(ui.form).get("emotion");
+  if (!text) { ui.formError.textContent = "Escribe un pensamiento antes de guardarlo."; ui.thought.focus(); return; }
+  if (!userPosition) { ui.formError.textContent = "Aún no tenemos una ubicación. Activa Modo Demo o espera unos segundos."; return; }
+  const payload = { text, emotion, lat: userPosition.lat, lng: userPosition.lng, createdAtClient: new Date().toISOString() };
+  const submit = ui.form.querySelector("button[type=submit]");
+  submit.disabled = true; submit.textContent = "Guardando…";
+  try {
+    if (firestore?.local || !firebaseApi) {
+      localThoughts.push({ id: `local-${Date.now()}`, ...payload, createdAt: new Date().toISOString() });
+      firestore.thoughts = localThoughts;
+      refreshOrbs();
+    } else {
+      await firebaseApi.addDoc(firebaseApi.collection(firebaseApi.db, "pensamientos"), { ...payload, createdAt: firebaseApi.serverTimestamp() });
+    }
+    ui.form.reset(); ui.characterCount.textContent = "0"; hideComposer(); showMessage("Tu pensamiento ahora habita este lugar.");
+  } catch (error) {
+    console.error(error);
+    ui.formError.textContent = "No se pudo guardar. Revisa tu conexión y las reglas de Firestore.";
+  } finally { submit.disabled = false; submit.innerHTML = "Guardar pensamiento <span aria-hidden=\"true\">↗</span>"; }
+}
+
+function addDemoThoughts() {
+  demoMode = true;
+  manualLook.yaw = 0; manualLook.pitch = 0;
+  if (!userPosition) {
+    userPosition = { lat: -0.180653, lng: -78.467838, accuracy: 0 };
+    origin = { ...userPosition };
+  }
+  const metersToLat = 1 / 111111;
+  const metersToLng = 1 / (111111 * Math.cos(THREE.MathUtils.degToRad(userPosition.lat)));
+  const samples = [
+    ["Hay lugares que te devuelven una versión de ti que ya no recordabas.", "nostalgia", 7, -11],
+    ["Hoy vine sin buscar nada y encontré un poco de aire.", "calma", -10, -8],
+    ["No sabía que necesitaba soltar esto hasta estar aquí.", "desahogo", 11, 6],
+    ["Gracias por todo lo que pasó antes de que yo llegara.", "gratitud", -4, 13]
+  ];
+  const additions = samples.map(([text, emotion, east, north], index) => ({ id: `demo-${index}-${Date.now()}`, text, emotion, lat: userPosition.lat + north * metersToLat, lng: userPosition.lng + east * metersToLng, createdAt: new Date(Date.now() - (index + 1) * 900000).toISOString() }));
+  localThoughts = [...localThoughts.filter(item => !item.id.startsWith("demo-")), ...additions];
+  if (!firestore || firestore.local) firestore = { thoughts: localThoughts, local: true };
+  else firestore.thoughts = [...firestore.thoughts.filter(item => !item.id.startsWith("demo-")), ...additions];
+  refreshOrbs();
+  ui.demo.textContent = "Demo activo";
+  ui.instructions.hidden = false;
+  showMessage("Demo activo: arrastra para mirar y toca un orbe para leerlo.");
+}
+
+function tidyUp() {
+  stream?.getTracks().forEach(track => track.stop());
+  if (positionWatchId !== undefined) navigator.geolocation?.clearWatch(positionWatchId);
+  unsubscribeSnapshot?.();
+}
+
+ui.enter.addEventListener("click", enterExperience);
+ui.demo.addEventListener("click", addDemoThoughts);
+ui.compose.addEventListener("click", showComposer);
+ui.closeComposer.addEventListener("click", hideComposer);
+ui.closeCard.addEventListener("click", closeMemoryCard);
+ui.thought.addEventListener("input", () => { ui.characterCount.textContent = ui.thought.value.length; ui.formError.textContent = ""; });
+ui.form.addEventListener("submit", saveThought);
+window.addEventListener("beforeunload", tidyUp);

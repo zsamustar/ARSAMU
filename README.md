@@ -1,25 +1,20 @@
-# Huellas Sonoras
+# Huellas del Espacio
 
-Prototipo de realidad aumentada para el Proyecto 7. La cámara reconoce tres imágenes impresas y muestra una huella de partículas con audio reactivo. No requiere instalar Node, Three.js ni MindAR: se cargan desde CDN.
+Prototipo WebAR basado en ubicación: muestra cápsulas de memoria cercanas mediante cámara, orientación, geolocalización, Three.js y Cloud Firestore. No requiere build ni dependencias instaladas.
 
-## Lo que falta añadir antes de publicarlo
+## Despliegue en 3 pasos
 
-1. En `assets/`, coloca tres audios MP3 de 30 a 45 segundos y nómbralos exactamente `audio0.mp3`, `audio1.mp3` y `audio2.mp3`.
-2. Ya tienes tres marcadores listos en `assets/markers/`: `01-calma.png`, `02-euforia.png` y `03-nostalgia.png`. No los recortes, edites ni cambies de orden.
-3. Abre el [compilador oficial de MindAR](https://hiukim.github.io/mind-ar-js-doc/tools/compile/) desde una computadora. Carga esas tres imágenes a la vez y en ese orden. Descarga el resultado y guárdalo como `assets/targets.mind`.
-4. Imprime las tres imágenes usadas para compilar, preferiblemente en papel mate A5 o A4. La primera imagen corresponde al marcador 0; la segunda al 1; la tercera al 2.
+1. Crea un proyecto de Firebase, habilita **Cloud Firestore** y copia su objeto de configuración web en [`firebase-config.js`](firebase-config.js). Para una demo abierta, configura reglas de Firestore apropiadas para el aula; antes de publicar, aplica reglas de acceso reales.
+2. Sirve esta carpeta por HTTPS. Para probar localmente puedes usar `npx serve .`; para sensores reales abre la dirección HTTPS desde el móvil. Los permisos de cámara y GPS no funcionan de forma fiable con `file://`.
+3. Sube estos cinco archivos a un repositorio y publícalo con GitHub Pages, o importa la carpeta en Vercel como sitio estático. No hace falta configurar comandos de compilación.
 
-## Publicación rápida en GitHub Pages
+## Prueba rápida
 
-1. Crea un repositorio público llamado `huellas-sonoras`.
-2. Sube el contenido completo de esta carpeta, incluida `assets/targets.mind` y los tres MP3.
-3. En GitHub, abre **Settings → Pages**. En **Build and deployment**, elige **Deploy from a branch**, selecciona `main` y `/ (root)`, y guarda.
-4. Abre `https://TU-USUARIO.github.io/huellas-sonoras/` desde el móvil y permite el acceso a la cámara.
+Pulsa **Entrar al espacio** y concede los permisos solicitados. En interior o sin giroscopio, usa **Modo Demo**: crea cuatro pensamientos alrededor de la posición actual y activa el arrastre con mouse o dedo. Si Firebase aún no está configurado, los pensamientos se conservan solo durante la pestaña abierta.
 
-No abras `index.html` con doble clic: los navegadores requieren HTTPS (o `localhost`) para permitir la cámara.
+## Archivos
 
-## Prueba física
-
-Pon un marcador a la vez frente a la cámara con buena luz. Al reconocerlo debe aparecer la huella, reproducirse el audio y activarse **+ Dejar huella**. El formulario guarda la última frase y emoción de cada marcador mediante el almacenamiento local del navegador: seguirá disponible después de recargar en ese mismo celular y navegador, pero no se comparte con otras personas ni se guarda en un servidor.
-
-Usa solo audio e imágenes sobre los que tengas permiso de uso.
+- `index.html`: estructura y controles accesibles.
+- `style.css`: interfaz editorial adaptable y capa AR.
+- `app.js`: sensores, conversión ENU, Three.js, raycasting, formulario y sincronización.
+- `firebase-config.js`: único archivo que requiere configuración.

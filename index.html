@@ -1,77 +1,89 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-type="software" data-radius="soft">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#07121b" />
-    <meta name="description" content="Una experiencia de realidad aumentada sobre música, memoria y lugar." />
-    <title>Huellas Sonoras</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#090b10" />
+    <meta name="page-type" content="software" />
+    <meta name="site-kind" content="software" />
+    <meta name="description" content="Huellas del Espacio es una experiencia WebAR de memoria colectiva anclada a lugares físicos." />
+    <meta property="og:title" content="Huellas del Espacio — WebAR de memoria colectiva" />
+    <meta property="og:description" content="Camina, mira a través de la lente y descubre pensamientos anclados al espacio." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>Huellas del Espacio — WebAR de memoria colectiva</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-          "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
-        }
-      }
-    </script>
-    <script type="module" src="app.js"></script>
   </head>
   <body>
-    <main id="experience" aria-live="polite">
-      <div id="ar-stage" aria-label="Vista de cámara de realidad aumentada"></div>
-
-      <section id="welcome" class="overlay overlay--welcome">
-        <div class="intro" data-enter>
-          <p class="eyebrow">Archivo de memoria pública</p>
-          <h1>Huellas<br />Sonoras</h1>
-          <p class="intro__copy">Apunta la cámara a uno de los tres pósteres para encontrar la música que quedó en ese lugar.</p>
-          <button id="start-button" class="button button--primary" type="button">Abrir la cámara</button>
-          <p class="fine-print">Usa el enlace publicado con HTTPS. La experiencia pide acceso a la cámara y reproduce audio solo después de este toque.</p>
-        </div>
-      </section>
-
-      <header class="hud" aria-label="Estado de la experiencia">
-        <div class="hud__brand">HS<span>·</span>01</div>
-        <p id="status" class="hud__status">La cámara está en espera.</p>
-        <div id="signal" class="signal" aria-hidden="true"><i></i><i></i><i></i></div>
-      </header>
-
-      <aside id="guide" class="guide" aria-label="Guía de marcadores">
-        <p class="guide__label">Tres puntos</p>
-        <ol>
-          <li><span class="dot dot--calm"></span>Calma</li>
-          <li><span class="dot dot--energy"></span>Euforia</li>
-          <li><span class="dot dot--memory"></span>Nostalgia</li>
-        </ol>
-      </aside>
-
-      <button id="leave-trace" class="button button--trace" type="button" disabled>+ Dejar huella</button>
-
-      <section id="trace-panel" class="trace-panel" aria-labelledby="trace-title" hidden>
-        <div class="trace-panel__head">
-          <div>
-            <p class="eyebrow">Aporte guardado en este dispositivo</p>
-            <h2 id="trace-title">Dejar una huella</h2>
+    <main id="top">
+      <section id="landing" class="landing" aria-labelledby="landing-title">
+        <div class="wrap">
+          <a class="skip-link" href="#enter-button">Ir al acceso</a>
+          <div class="landing__topline" data-enter>
+            <a class="brand" href="#top" aria-label="Huellas del Espacio, inicio"><span class="brand__glyph">◌</span>Huellas del Espacio</a>
+            <span>WebAR · memoria situada</span>
           </div>
-          <button id="close-panel" class="close-button" type="button" aria-label="Cerrar formulario">×</button>
+          <div class="landing__content" data-enter>
+          <p class="eyebrow">Una aplicación WebAR geolocalizada</p>
+          <h1 id="landing-title">WebAR de <em>memorias</em> situadas</h1>
+          <p class="landing__lead">Los lugares recuerdan lo que sentimos en ellos. Camina, mira a través de la lente y descubre los pensamientos que habitan este espacio.</p>
+          <button id="enter-button" class="button button--primary" type="button">Entrar al espacio <span aria-hidden="true">↗</span></button>
+          <p id="landing-note" class="landing__note">La cámara, ubicación y orientación se solicitan solo al entrar.</p>
+          </div>
+          <div class="landing__foot" data-enter>
+            <span>60 m de escucha</span><span>·</span><span>pensamientos compartidos en tiempo real</span>
+          </div>
         </div>
-        <form id="trace-form">
-          <label for="trace-text">Una frase para este lugar</label>
-          <input id="trace-text" name="trace-text" maxlength="74" placeholder="Esperando el bus después de clase" required />
-          <label for="emotion">Emoción</label>
-          <select id="emotion" name="emotion">
-            <option value="calm">Calma</option>
-            <option value="energy">Euforia</option>
-            <option value="memory">Nostalgia</option>
-          </select>
-          <button class="button button--primary" type="submit">Publicar huella</button>
-          <p class="form-note">La última huella de cada marcador queda guardada en este navegador. No se comparte todavía con otros celulares.</p>
-        </form>
       </section>
 
-      <div id="message" class="message" role="status"></div>
+      <section id="ar-space" class="ar-space" aria-label="Experiencia de realidad aumentada" hidden>
+        <video id="camera-feed" class="camera-feed" autoplay muted playsinline aria-label="Vista de la cámara trasera"></video>
+        <canvas id="ar-canvas" aria-label="Orbes de memoria en realidad aumentada"></canvas>
+        <div class="ar-vignette" aria-hidden="true"></div>
+
+        <header class="ar-header">
+          <a class="brand brand--light" href="#top" aria-label="Salir de la experiencia"><span class="brand__glyph">◌</span>Huellas</a>
+          <div class="nearby-status" aria-live="polite"><span class="status-dot"></span><span id="memory-count">0 memorias cerca</span></div>
+          <button id="demo-button" class="button button--glass button--small" type="button">Modo Demo</button>
+        </header>
+
+        <div id="ar-message" class="ar-message" role="status" aria-live="polite">Preparando los sensores…</div>
+        <div id="ar-instructions" class="ar-instructions" hidden>
+          <span class="instruction-icon" aria-hidden="true">⌁</span>
+          <p>Mueve el teléfono para buscar rastros</p>
+        </div>
+
+        <article id="memory-card" class="memory-card" aria-live="polite" hidden>
+          <button id="close-memory" class="icon-button" type="button" aria-label="Cerrar pensamiento">×</button>
+          <p id="memory-emotion" class="memory-card__emotion"></p>
+          <div class="memory-card__meta"><span id="memory-distance"></span><span>·</span><span id="memory-time"></span></div>
+          <p id="memory-text" class="memory-card__text"></p>
+        </article>
+
+        <button id="compose-button" class="compose-button" type="button"><span aria-hidden="true">+</span> Dejar un pensamiento</button>
+
+        <section id="composer" class="composer" aria-labelledby="composer-title" hidden>
+          <div class="sheet-handle" aria-hidden="true"></div>
+          <div class="composer__heading"><div><p class="eyebrow">En este lugar</p><h2 id="composer-title">Deja una huella</h2></div><button id="close-composer" class="icon-button icon-button--dark" type="button" aria-label="Cerrar formulario">×</button></div>
+          <form id="thought-form" novalidate>
+            <label for="thought-input">Pensamiento</label>
+            <textarea id="thought-input" maxlength="180" rows="4" placeholder="Escribe lo que este espacio despierta en ti…" required></textarea>
+            <div class="composer__counter"><span id="character-count">0</span>/180</div>
+            <fieldset class="emotion-fieldset"><legend>Atmósfera</legend><div class="emotion-grid">
+              <label class="emotion-option"><input type="radio" name="emotion" value="calma" checked /><span class="emotion-swatch emotion-swatch--calma"></span><span>Calma</span></label>
+              <label class="emotion-option"><input type="radio" name="emotion" value="nostalgia" /><span class="emotion-swatch emotion-swatch--nostalgia"></span><span>Nostalgia</span></label>
+              <label class="emotion-option"><input type="radio" name="emotion" value="desahogo" /><span class="emotion-swatch emotion-swatch--desahogo"></span><span>Desahogo</span></label>
+              <label class="emotion-option"><input type="radio" name="emotion" value="gratitud" /><span class="emotion-swatch emotion-swatch--gratitud"></span><span>Gratitud</span></label>
+            </div></fieldset>
+            <p id="form-error" class="form-error" role="alert"></p>
+            <button class="button button--submit" type="submit">Guardar pensamiento <span aria-hidden="true">↗</span></button>
+          </form>
+        </section>
+      </section>
     </main>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
